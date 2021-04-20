@@ -1,3 +1,6 @@
+/* turn of windows warnings for _strcmp etc. */
+#define _CRT_NONSTDC_NO_DEPRECATE
+
 #include "fmacros.h"
 #include "sockcompat.h"
 #include <stdio.h>
@@ -168,7 +171,7 @@ static void send_client_tracking(redisContext *c, const char *str) {
     freeReplyObject(reply);
 }
 
-static int disconnect(redisContext *c, int keep_fd) {
+static redisFD disconnect(redisContext *c, int keep_fd) {
     redisReply *reply;
 
     /* Make sure we're on DB 9. */
@@ -183,7 +186,7 @@ static int disconnect(redisContext *c, int keep_fd) {
     if (keep_fd)
         return redisFreeKeepFd(c);
     redisFree(c);
-    return -1;
+    return REDIS_INVALID_FD;
 }
 
 static void do_ssl_handshake(redisContext *c) {
@@ -212,8 +215,8 @@ static redisContext *do_connect(struct config config) {
         /* Create a dummy connection just to get an fd to inherit */
         redisContext *dummy_ctx = redisConnectUnix(config.unix_sock.path);
         if (dummy_ctx) {
-            int fd = disconnect(dummy_ctx, 1);
-            printf("Connecting to inherited fd %d\n", fd);
+            redisFD fd = disconnect(dummy_ctx, 1);
+            printf("Connecting to inherited fd %d\n", (int)fd);
             c = redisConnectFd(fd);
         }
     } else {
