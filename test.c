@@ -1417,6 +1417,7 @@ static void test_throughput(struct config config) {
 struct _astest {
     redisAsyncContext *ac;
     int testno;
+    int counter;
     int connects;
     int connect_status;
     int disconnects;
@@ -1428,6 +1429,15 @@ static void asCleanup(void* data)
 {
     struct _astest *t = (struct _astest *)data;
     t->ac = NULL;
+}
+
+static void asleep(int ms)
+{
+#if _MSC_VER
+    Sleep(ms);
+#else
+    usleep(ms*1000);
+#endif
 }
 
 static void connectCallback(const redisAsyncContext *c, int status) {
@@ -1453,6 +1463,31 @@ static void disconnectCallback(const redisAsyncContext *c, int status) {
     astest.disconnects++;
     astest.disconnect_status = status;
     astest.connected = 0;
+}
+
+static void commandCallback(struct redisAsyncContext *ac, void* _reply, void* _privdata)
+{
+    redisReply *reply = (redisReply*)_reply;
+    struct _astest *t = (struct _astest *)ac->data;
+    assert(t == &astest);
+    (void)_privdata;
+    if (t->testno == 5)
+    {
+        test_cond(reply != NULL && reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "PONG") == 0);
+        redisAsyncFree(ac);
+    }
+    if (t->testno == 6)
+    {
+        /* two ping pongs */
+        assert(reply != NULL && reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "PONG") == 0);
+        if (++t->counter == 1) {
+            int status = redisAsyncCommand(ac, commandCallback, NULL, "PING");
+            assert(status == REDIS_OK);
+        } else {
+            test_cond(reply != NULL && reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "PONG") == 0);
+            redisAsyncFree(ac);
+        }
+    }
 }
 
 static redisAsyncContext *do_aconnect(struct config config, int testno)
@@ -1496,6 +1531,7 @@ static redisAsyncContext *do_aconnect(struct config config, int testno)
 }
 
 static void test_async(struct config config) {
+    int status;
     redisAsyncContext *c;
     struct config defaultconfig = config;
    
@@ -1535,6 +1571,7 @@ static void test_async(struct config config) {
 
     /* The following test hangs on windows, unless fix for async
      * connect on windows is applied
+     * https://github.com/redis/hiredis/issues/947
      */
     test("Async connect failure: ");
     if (config.type == CONN_TCP)
@@ -1554,6 +1591,7 @@ static void test_async(struct config config) {
 
     /* Test that we can disconnect directly from the
      * connect callback.  This needs needs a separate fix
+     * see: https://github.com/redis/hiredis/issues/946
      */
     test("Async disconnect from connect callback: ");
     c = do_aconnect(config, 3);
@@ -1581,6 +1619,34 @@ static void test_async(struct config config) {
     assert(!astest.ac);
     test_cond(astest.connected == 0);
     
+    /* Test a ping/pong after connection */
+    test("Async PING/PONG: ");
+    c = do_aconnect(config, 5);
+    while(astest.connected == 0)
+        redisPollTick(c, 0.1);
+    status = redisAsyncCommand(c, commandCallback, NULL, "PING");
+    assert(status == REDIS_OK);
+    while(astest.ac)
+        redisPollTick(c, 0.1);
+    
+    /* Test a ping/pong after connection that didn't time out.
+     * see https://github.com/redis/hiredis/issues/945
+     */
+    test("Async PING/PONG after connect timeout: ");
+    if (config.type == CONN_TCP)
+    {
+        config.tcp.timeout.tv_usec = 10000; /* 10ms  */
+        c = do_aconnect(config, 6);
+        while(astest.connected == 0)
+            redisPollTick(c, 0.1);
+        /* sleep 0.1 s, allowing old timeout to arrive */
+        asleep(10);
+        status = redisAsyncCommand(c, commandCallback, NULL, "PING");
+        assert(status == REDIS_OK);
+        while(astest.ac)
+            redisPollTick(c, 0.1);
+    }
+    config = defaultconfig;
 
 }
 
