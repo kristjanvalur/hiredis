@@ -1566,7 +1566,11 @@ static void test_async(struct config config) {
         while(astest.connected == 0)
             redisPollTick(c, 0.1);
         assert(astest.connected == -1);
-        redisAsyncFree(c);
+        /*
+         * freeing should not be done, clearing should have happened.
+         *redisAsyncFree(c);
+         */
+        assert(astest.ac == NULL);
         test_cond(astest.connect_status == REDIS_ERR);
     } else
         test_skipped();
@@ -1586,7 +1590,7 @@ static void test_async(struct config config) {
         while(astest.connected == 0)
             redisPollTick(c, 0.1);
         assert(astest.connected == -1);
-        redisAsyncFree(c);
+        assert(astest.ac == NULL);
         test_cond(astest.connect_status == REDIS_ERR);
     } else
         test_skipped();
